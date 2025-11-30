@@ -1,0 +1,145 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ====================================================================
+# --- FUNCIONES AUXILIARES ---
+# ====================================================================
+
+def mostrar_imagenes(imagenes, titulos, filas=2, cols=3, figsize=(16, 10)):
+    """Función auxiliar para mostrar múltiples imágenes"""
+    total = len(imagenes)
+    fig, axes = plt.subplots(filas, cols, figsize=figsize)
+    axes = axes.ravel()
+    
+    for i in range(len(axes)):
+        if i < total:
+            img = imagenes[i]
+            # Convertir a RGB si es necesario para Matplotlib
+            if len(img.shape) == 2:
+                axes[i].imshow(img, cmap='gray')
+            else:
+                axes[i].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            axes[i].set_title(titulos[i])
+        axes[i].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+def obtener_kernel_impar(valor):
+    """Asegura que el tamaño del kernel sea impar y entero"""
+    k = int(valor)
+    if k % 2 == 0:
+        k += 1
+    # Aseguramos que el valor mínimo del kernel sea 3
+    return max(3, k) 
+
+# ====================================================================
+# --- FUNCIÓN PRINCIPAL DE SEGMENTACIÓN ---
+# ====================================================================
+
+def segmentar_monedas_canny(ruta_imagen):
+    print("="*60)
+    print("PROCESAMIENTO V7: DETECCIÓN DE BORDES Y RECONSTRUCCIÓN")
+    print("="*60)
+    
+    # 1. CARGA DE IMAGEN
+    img_original = cv2.imread(ruta_imagen)
+    if img_original is None:
+        print("Error: No se pudo cargar la imagen.")
+        return
+
+    h, w = img_original.shape[:2]
+    dim_min = min(h, w)
+    area_total = h * w
+
+    # 2. PREPROCESAMIENTO (GRAY + CLAHE)
+    img_gray = cv2.cvtColor(img_original, cv2.COLOR_BGR2GRAY)
+    
+    # CLAHE: Mejora el contraste local (requisito del usuario)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    img_clahe = clahe.apply(img_gray)
+    
+    # Suavizado Gaussiano dinámico (CRÍTICO antes de Canny)
+    k_blur = obtener_kernel_impar(dim_min * 0.005) # 0.5%
+    img_blur = cv2.GaussianBlur(img_clahe, (k_blur, k_blur), 0)
+
+    # 3. DETECCIÓN DE BORDES CANNY
+    # Los umbrales se ajustan dinámicamente basados en la mediana (v) de la imagen.
+    v = np.median(img_blur)
+    sigma = 0.33 
+    
+    lower_thresh = int(max(0, (1.0 - sigma) * v))
+    upper_thresh = int(min(255, (1.0 + sigma) * v))
+    
+    img_canny = cv2.Canny(img_blur, lower_thresh, upper_thresh)
+    
+    print(f"Canny: Low={lower_thresh}, High={upper_thresh}")
+
+    # 4. RECONSTRUCCIÓN MORFOLÓGICA (Dilatación Iterativa)
+    # Convierte los bordes detectados en áreas sólidas.
+    
+    # Kernel de Dilatación: ~1.5% (debe ser lo suficientemente grande para cerrar las brechas de la moneda).
+    k_dilate = obtener_kernel_impar(dim_min * 0.015) 
+    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_dilate, k_dilate))
+    
+    # Dilatamos (engrosamos) los bordes 3 veces para asegurarnos de que se toquen y cierren.
+    img_dilated = cv2.dilate(img_canny, kernel_dilate, iterations=3)
+    
+    # Cierre: Limpieza final de agujeros internos (kernel pequeño)
+    k_close = obtener_kernel_impar(dim_min * 0.005)
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_close, k_close))
+    img_clean = cv2.morphologyEx(img_dilated, cv2.MORPH_CLOSE, kernel_close, iterations=1)
+
+
+    # 5. DETECCIÓN Y FILTRADO FINAL
+    contours, _ = cv2.findContours(img_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contornos_validos = []
+    img_resultados = img_original.copy()
+    
+    # Filtro de Área (Dinámico y Permisivo)
+    min_area = area_total * 0.0005 # 0.05%
+    max_area = area_total * 0.20
+    
+    print(f"Filtro de Área: {int(min_area)} - {int(max_area)} px")
+    
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        
+        if min_area < area < max_area:
+            perimetro = cv2.arcLength(cnt, True)
+            if perimetro == 0: continue
+            
+            # Filtro de Circularidad/Compacidad (para descartar líneas y ruido)
+            circularidad = 4 * np.pi * (area / (perimetro * perimetro))
+            
+            # El valor 0.3 es permisivo, acepta círculos, cuadrados y formas inclinadas
+            if circularidad > 0.3:
+                contornos_validos.append(cnt)
+                
+                # Visualización
+                cv2.drawContours(img_resultados, [cnt], -1, (0, 255, 0), 3)
+                x, y, w_box, h_box = cv2.boundingRect(cnt)
+                cv2.putText(img_resultados, f"#{len(contornos_validos)}", (x, y-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+    print(f"\nRESULTADOS FINALES:")
+    print(f"  - Total de objetos segmentados: {len(contornos_validos)}")
+    
+    # 6. VISUALIZACIÓN
+    imagenes = [
+        img_clahe, img_blur, img_canny, 
+        img_dilated, img_clean, img_resultados
+    ]
+    titulos = [
+        '1. CLAHE (Contraste Local)', 
+        f'2. Gaussian Blur (K={k_blur})', 
+        f'3. Bordes Canny', 
+        f'4. Dilatación Iterativa (K={k_dilate})', 
+        '5. Morfología Final', 
+        f'6. Resultado ({len(contornos_validos)} objs)'
+    ]
+    
+    mostrar_imagenes(imagenes, titulos, filas=2, cols=3)
+
+segmentar_monedas_canny('Monedas.jpg')
