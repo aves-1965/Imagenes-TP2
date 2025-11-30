@@ -1,8 +1,5 @@
 Imagenes_TP2
 Resolución del Trabajo Práctico 2 de Procesamiento de Imágenes
 
-Parte 1: 
-Descargar la imagen "Imagen_con_detalles_escondidos.png". el código "TP1_P_1.py" y los requirements. Crear el entorno virtual según el documento "Aclaraciones para correr el codigo en VSC.pdf"
-
-Parte 2: 
-Descargar todas las imagenes "formulario_0*.png". el código "TP1-P-2.py" y los requirements. Crear el entorno virtual según el documento "Aclaraciones para correr el codigo en VSC.pdf"
+Para ambos ejercicios se requiere descargar el archivo .py o .ipynb correspondiente respetando la estructura de los directorios EJ1 y EJ2. 
+En ambos directorios se conserva todo el trabjao realizado (imágenes, versiones de prueba, planillas, informes, etc, etc) en las correspondientes Bauleras. Esto se agregó con  fines de documentación y no afectan a la ejecución de los Ejercicios.
